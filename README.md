@@ -1,6 +1,6 @@
 # four by four
 
-a one-bit dithering press for images and video, in the browser: black & white, or colour (one bit per rgb channel, eight muted inks).
+a one-bit dithering press for images and video, in the browser: black & white, or color (one bit per rgb channel, eight muted inks).
 
 a rapid prototyping project built at impulse @ georgia tech. it's based on dithermark and on komal yadav's double exposure touchdesigner project.
 
