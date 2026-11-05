@@ -174,8 +174,40 @@ main {
 .tray button {
   flex: none; width: 56px; height: 56px; padding: 0; border: 1px solid var(--faint);
   background: var(--paper) center/cover no-repeat; cursor: var(--cursor-hot);
+  position: relative; isolation: isolate; overflow: hidden;
 }
 .tray button.on { border-color: var(--ink); outline: 1px solid var(--ink); }
+
+/* picked for a double exposure: a small a / b tag in the corner */
+.tray button.picked { border-color: var(--ink); }
+.tray button.picked::after {
+  content: attr(data-pick); position: absolute; top: 0; left: 0;
+  background: var(--ink); color: var(--paper);
+  font-size: 11px; font-style: italic; line-height: 1; padding: 2px 5px 3px;
+}
+
+/* a pair: both pictures in grey, laid over each other like the exposure itself */
+.tray button.pair span,
+.pair-thumb span { position: absolute; inset: 0; background: center/cover no-repeat; filter: grayscale(1) contrast(1.1); }
+.tray button.pair span + span,
+.pair-thumb span + span { mix-blend-mode: screen; }
+.tray button.pair::after {
+  content: "a+b"; position: absolute; right: 0; bottom: 0;
+  background: var(--paper); color: var(--ink); font-size: 10px; line-height: 1; padding: 2px 4px 3px;
+}
+
+/* "double expose these two?" popup above the strip */
+.pair-pop {
+  position: absolute; left: 50%; transform: translateX(-50%); z-index: 5;
+  display: flex; align-items: center; gap: 12px;
+  max-width: calc(100% - 2 * var(--edge));
+  padding: 8px 12px 8px 8px;
+  background: var(--paper); border: 1px solid var(--ink);
+}
+.pair-thumb { position: relative; isolation: isolate; flex: none; width: 36px; height: 36px; border: 1px solid var(--faint); overflow: hidden; }
+.pair-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pair-pop .btn { padding: 4px 14px 3px; flex: none; }
+.pair-pop .link { flex: none; }
 
 
 /* ── panel ─────────────────────────────── */
@@ -231,6 +263,7 @@ input[type="checkbox"]:checked { background: var(--ink); box-shadow: inset 0 0 0
 .files { list-style: none; margin: 0; padding: 0; counter-reset: f; }
 .files li { display: grid; grid-template-columns: 22px 1fr auto; gap: 6px; padding: 3px 0; align-items: baseline; }
 .files li::before { counter-increment: f; content: counter(f, upper-alpha) "."; font-style: italic; color: var(--muted); }
+.files.numbered li::before { content: counter(f) "."; }
 .files li.muted::before { content: ""; }
 .files .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .files .meta { color: var(--muted); font-size: 13px; }

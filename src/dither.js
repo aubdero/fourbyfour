@@ -1,6 +1,6 @@
-// One-bit dithering engine (black & white, or one bit per RGB channel for colour).
-// Every function works on a Float32Array of tones (0 = black, 1 = white)
-// and returns a Uint8Array of bits (1 = paper/white, 0 = ink/black).
+// one-bit dithering engine (black & white, or one bit per rgb channel for color).
+// every function works on a float32array of tones (0 = black, 1 = white)
+// and returns a uint8array of bits (1 = paper/white, 0 = ink/black).
 
 export const ALGORITHMS = [
   { group: 'Threshold', items: [
@@ -29,11 +29,11 @@ export const ALGORITHMS = [
   ]},
 ];
 
-// Colour mode's 8 inks, indexed r·4 + g·2 + b by which channel bits are on.
-// Each ink is pulled toward its own grey (same luminance) so the output reads muted
+// color mode's 8 inks, indexed r·4 + g·2 + b by which channel bits are on.
+// each ink is pulled toward its own grey (same luminance) so the output reads muted
 // rather than pure primaries, without shifting the image's tonal balance.
-// Every "on" channel stays above 127 and every "off" one below 128, so the bits can
-// be read back from the rendered pixels (the GIF exporter relies on this).
+// every "on" channel stays above 127 and every "off" one below 128, so the bits can
+// be read back from the rendered pixels (the gif exporter relies on this).
 const SATURATION = 0.6;
 export const COLOR_PALETTE = [0, 1, 2, 3, 4, 5, 6, 7].map((k) => {
   const rgb = [k & 4 ? 255 : 0, k & 2 ? 255 : 0, k & 1 ? 255 : 0];
@@ -57,7 +57,7 @@ const KERNELS = {
 export const isDiffusion = (a) => a in KERNELS;
 export const isScreen = (a) => a === 'halftone' || a === 'lines';
 
-// Bayer matrices, normalised to (0,1)
+// bayer matrices, normalised to (0,1)
 const bayerCache = {};
 function bayer(n) {
   if (bayerCache[n]) return bayerCache[n];
@@ -80,9 +80,9 @@ function bayer(n) {
 const bayer8 = bayer(8);
 
 /**
- * Convert RGBA pixels to tone values with brightness/contrast/gamma applied.
+ * convert rgba pixels to tone values with brightness/contrast/gamma applied.
  * `channel` is 'luma' (black & white) or 0 / 1 / 2 to take red / green / blue alone
- * (colour mode dithers each channel separately, one bit each → an 8-colour palette).
+ * (color mode dithers each channel separately, one bit each → an 8-color palette).
  */
 export function toTone(rgba, tone, invert = false, channel = 'luma') {
   const n = rgba.length >> 2;
@@ -123,9 +123,12 @@ export function blendTones(a, b, mode, mix) {
 
 export function blendBits(a, b, w, mode, mix) {
   const out = new Uint8Array(a.length);
+  // "average" takes b in only half the cells at full mix, matching the tone blend
+  // (where average at 100% is (a + b) / 2, not b alone)
+  const reach = mode === 'average' ? mix / 2 : mix;
   for (let i = 0; i < a.length; i++) {
     const x = i % w, y = (i / w) | 0;
-    const take = bayer8[(y & 7) * 8 + (x & 7)] < mix;
+    const take = bayer8[(y & 7) * 8 + (x & 7)] < reach;
     if (!take) { out[i] = a[i]; continue; }
     switch (mode) {
       case 'screen': case 'lighten': out[i] = a[i] | b[i]; break;

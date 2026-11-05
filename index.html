@@ -20,8 +20,8 @@
     <section class="stage" id="stage">
       <div class="drop" id="drop">
         <div class="drop-inner">
-          <p class="big">Drop an image, or up to two videos.</p>
-          <p class="small">Images: JPG, PNG, WebP, GIF, up to 25&nbsp;MB each.<br />Videos: MP4, MOV, WebM, up to 500&nbsp;MB each. Two videos become a double exposure.</p>
+          <p class="big">Drop images or videos here.</p>
+          <p class="small">Images: JPG, PNG, WebP, GIF, up to 25&nbsp;MB each, 24 at a time. Pick two to double expose them.<br />Videos: MP4, MOV, WebM, up to 500&nbsp;MB each. Two videos, or a video and one image, become a double exposure.</p>
           <p><button class="btn" id="btnChoose">Choose files</button></p>
         </div>
       </div>
@@ -54,6 +54,12 @@
         <span class="mono" id="timecode">0.00 / 0.00</span>
       </div>
       <div class="tray" id="tray" hidden></div>
+      <div class="pair-pop" id="pairPop" role="dialog" aria-label="double exposure" hidden>
+        <span class="pair-thumb" id="pairThumb"><span></span><span></span></span>
+        <span class="pair-text">Double expose <i id="pairNames"></i>?</span>
+        <button class="btn" id="pairGo">Combine</button>
+        <button class="link" id="pairNo">Cancel</button>
+      </div>
     </section>
 
     <aside class="panel" id="panel" aria-disabled="true">
