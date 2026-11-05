@@ -1,4 +1,4 @@
-// Black-and-white dithering engine.
+// One-bit dithering engine (black & white, or one bit per RGB channel for colour).
 // Every function works on a Float32Array of tones (0 = black, 1 = white)
 // and returns a Uint8Array of bits (1 = paper/white, 0 = ink/black).
 
@@ -28,6 +28,18 @@ export const ALGORITHMS = [
     ['sierralite', 'Sierra Lite'],
   ]},
 ];
+
+// Colour mode's 8 inks, indexed r·4 + g·2 + b by which channel bits are on.
+// Each ink is pulled toward its own grey (same luminance) so the output reads muted
+// rather than pure primaries, without shifting the image's tonal balance.
+// Every "on" channel stays above 127 and every "off" one below 128, so the bits can
+// be read back from the rendered pixels (the GIF exporter relies on this).
+const SATURATION = 0.6;
+export const COLOR_PALETTE = [0, 1, 2, 3, 4, 5, 6, 7].map((k) => {
+  const rgb = [k & 4 ? 255 : 0, k & 2 ? 255 : 0, k & 1 ? 255 : 0];
+  const l = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+  return rgb.map((c) => Math.round(l + (c - l) * SATURATION));
+});
 
 // [dx, dy, weight], divisor
 const KERNELS = {
@@ -65,20 +77,25 @@ function bayer(n) {
   for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) flat[y * n + x] = (m[y][x] + 0.5) / (n * n);
   return (bayerCache[n] = flat);
 }
-export const bayer8 = bayer(8);
+const bayer8 = bayer(8);
 
 /**
  * Convert RGBA pixels to tone values with brightness/contrast/gamma applied.
+ * `channel` is 'luma' (black & white) or 0 / 1 / 2 to take red / green / blue alone
+ * (colour mode dithers each channel separately, one bit each → an 8-colour palette).
  */
-export function toTone(rgba, tone, invert = false, out) {
+export function toTone(rgba, tone, invert = false, channel = 'luma') {
   const n = rgba.length >> 2;
-  const t = out && out.length === n ? out : new Float32Array(n);
+  const t = new Float32Array(n);
   const c = Math.max(-0.99, Math.min(0.99, tone.contrast));
   const cf = (1 + c) / (1 - c);
   const b = tone.brightness;
   const ig = 1 / tone.gamma;
+  const luma = channel === 'luma';
   for (let i = 0, p = 0; i < n; i++, p += 4) {
-    let v = (0.2126 * rgba[p] + 0.7152 * rgba[p + 1] + 0.0722 * rgba[p + 2]) / 255;
+    let v = luma
+      ? (0.2126 * rgba[p] + 0.7152 * rgba[p + 1] + 0.0722 * rgba[p + 2]) / 255
+      : rgba[p + channel] / 255;
     v = (v - 0.5) * cf + 0.5 + b;
     v = v <= 0 ? 0 : v >= 1 ? 1 : Math.pow(v, ig);
     t[i] = invert ? 1 - v : v;
@@ -125,10 +142,10 @@ export function blendBits(a, b, w, mode, mix) {
  */
 export function dither(tone, w, h, opts) {
   const { algo } = opts;
+  if (KERNELS[algo]) return diffuse(tone, w, h, KERNELS[algo], opts);
+
   const bias = 0.5 - opts.threshold;
   const out = new Uint8Array(w * h);
-
-  if (KERNELS[algo]) return diffuse(tone, w, h, KERNELS[algo], opts);
 
   if (algo === 'threshold') {
     for (let i = 0; i < out.length; i++) out[i] = tone[i] + bias > 0.5 ? 1 : 0;

@@ -3,12 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>derother</title>
+  <title>four by four</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="stylesheet" href="/src/style.css" />
 </head>
 <body>
   <header class="top">
-    <h1>derother</h1>
+    <h1>four <span class="x">×</span> four</h1>
     <nav>
       <button id="btnAdd" class="link">Add file</button>
       <button id="btnClear" class="link" disabled>Clear</button>
@@ -41,19 +42,25 @@
           </div>
         </div>
       </div>
+      <div class="trim" id="trim" hidden>
+        <div class="trim-track" id="trimTrack">
+          <div class="trim-win" data-t="move"><b data-t="in"></b><b data-t="out"></b></div>
+        </div>
+        <span class="mono" id="trimInfo"></span>
+      </div>
       <div class="transport" id="transport" hidden>
         <button class="link" id="btnPlay">Play</button>
         <input type="range" id="scrub" min="0" max="1" step="0.001" value="0" />
         <span class="mono" id="timecode">0.00 / 0.00</span>
       </div>
       <div class="tray" id="tray" hidden></div>
-      <p class="hint" id="hint" hidden><i>Drag to reposition · scroll to zoom · double-click to crop</i></p>
     </section>
 
     <aside class="panel" id="panel" aria-disabled="true">
       <section>
         <h2>Source</h2>
         <ol class="files" id="files"><li class="muted"><i>Nothing loaded.</i></li></ol>
+        <p class="actions" id="swapRow" hidden><button class="link" id="btnSwap">Swap A ↔ B</button></p>
       </section>
 
       <section>
@@ -72,7 +79,7 @@
         </label>
         <label class="row"><span>Width</span><input type="number" data-k="frame.w" min="16" max="4096" step="1" /><em>px</em></label>
         <label class="row"><span>Height</span><input type="number" data-k="frame.h" min="16" max="4096" step="1" /><em>px</em></label>
-        <div class="layer-pick" id="layerPick" hidden>
+        <div class="layer-pick" hidden>
           <span>Adjust</span>
           <button class="chip" data-layer="0">A</button>
           <button class="chip" data-layer="1">B</button>
@@ -103,6 +110,12 @@
 
       <section>
         <h2>Dither</h2>
+        <label class="row"><span>Palette</span>
+          <select data-k="dither.color" data-bool>
+            <option value="false">Black &amp; white</option>
+            <option value="true">Color (RGB)</option>
+          </select>
+        </label>
         <label class="row"><span>Method</span><select data-k="dither.algo" id="algo"></select></label>
         <label class="row"><span>Pixel size</span><input type="range" data-k="dither.pixel" min="1" max="16" step="1" /><output data-f="px"></output></label>
         <label class="row"><span>Threshold</span><input type="range" data-k="dither.threshold" min="0" max="1" step="0.005" /><output data-f="pct"></output></label>
@@ -110,6 +123,8 @@
         <label class="row check" data-show="diffusion"><span>Serpentine</span><input type="checkbox" data-k="dither.serpentine" /></label>
         <label class="row" data-show="screen"><span>Cell</span><input type="range" data-k="dither.cell" min="2" max="32" step="0.5" /><output data-f="px"></output></label>
         <label class="row" data-show="screen"><span>Angle</span><input type="range" data-k="dither.angle" min="0" max="180" step="1" /><output data-f="deg"></output></label>
+        <label class="row check" data-show="video"><span>Jitter</span><input type="checkbox" data-k="dither.jitter" /></label>
+        <label class="row" data-show="jitter"><span>Amount</span><input type="range" data-k="dither.jitterAmt" min="1" max="16" step="1" /><output data-f="px"></output></label>
       </section>
 
       <section>
@@ -165,7 +180,7 @@
     </aside>
   </main>
 
-  <footer class="status"><span id="status"><i>Ready.</i></span></footer>
+  <footer class="status"><span id="status"></span></footer>
 
   <input type="file" id="file" multiple accept="image/*,video/*,.mov,.mp4,.webm,.m4v" hidden />
   <script type="module" src="/src/main.js"></script>

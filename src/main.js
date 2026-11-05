@@ -1,4 +1,4 @@
-import { ALGORITHMS, dither, toTone, blendTones, blendBits, isDiffusion, isScreen } from './dither.js';
+import { ALGORITHMS, COLOR_PALETTE, dither, toTone, blendTones, blendBits, isDiffusion, isScreen } from './dither.js';
 import { exportImage, exportVideo } from './export.js';
 
 const MB = 1024 * 1024;
@@ -21,7 +21,7 @@ const S = {
   get layer() { return this.layers[this.sel] || this.layers[0]; },
   frame: { aspect: 'source', w: 1200, h: 1200 },
   time: { length: 5, fps: 24, playhead: 0 },
-  dither: { algo: 'atkinson', pixel: 2, threshold: 0.5, strength: 1, serpentine: true, cell: 6, angle: 45 },
+  dither: { color: false, algo: 'bayer4', pixel: 2, threshold: 0.5, strength: 1, serpentine: true, cell: 6, angle: 45, jitter: false, jitterAmt: 2 },
   tone: { invert: false },   // brightness / contrast / gamma live on each layer
   blend: { when: 'before', mode: 'screen', mix: 1 },
   exp: { format: 'png', scale: 1, quality: 0.92 },
@@ -96,30 +96,51 @@ function cover(L, gw, gh) {
   return { dw: cw * s, dh: ch * s, s };
 }
 
+// Every dither cell becomes a whole number of output pixels, so the export is an
+// exact enlargement of the preview grid (a fractional cell size, e.g. pixel 1 at ½×,
+// would drop or double rows and columns unevenly).
 function exportSize() {
-  const { W, H } = dims();
-  let w = Math.round(W * S.exp.scale), h = Math.round(H * S.exp.scale);
-  if (S.exp.format === 'mp4' || S.exp.format === 'mov') { w += w & 1; h += h & 1; }
-  return { w, h };
+  const { gw, gh } = dims();
+  const cell = Math.max(1, Math.round(S.dither.pixel * S.exp.scale));
+  let w = gw * cell, h = gh * cell;
+  // H.264 needs even sizes: trim the odd last row / column rather than stretch the image
+  if (S.exp.format === 'mp4' || S.exp.format === 'mov') { w = w > 1 ? w - (w & 1) : 2; h = h > 1 ? h - (h & 1) : 2; }
+  return { w, h, cell };
 }
 
 // ── rendering ───────────────────────────────────────────
-function sample(L, gw, gh) {
+// Jitter: a small random shift of the whole picture, new on every output frame.
+// It's seeded by the frame number, so playback and export shake identically.
+const hash = (n, k) => { const x = Math.sin(n * 12.9898 + k * 78.233) * 43758.5453; return x - Math.floor(x); };
+function jitter() {
+  if (S.mode !== 'video' || !S.dither.jitter) return { jx: 0, jy: 0, a: 0 };
+  const n = Math.round(S.time.playhead * S.time.fps);
+  const a = S.dither.jitterAmt / S.dither.pixel; // output px -> grid cells
+  return { jx: (hash(n, 1) * 2 - 1) * a, jy: (hash(n, 2) * 2 - 1) * a, a };
+}
+
+function sample(L, gw, gh, jit = { jx: 0, jy: 0, a: 0 }) {
   if (work.width !== gw) work.width = gw;
   if (work.height !== gh) work.height = gh;
   wctx.fillStyle = '#808080';
   wctx.fillRect(0, 0, gw, gh);
   const ready = L.kind === 'image' || L.src.readyState >= 2;
   if (ready) {
-    const { dw, dh } = cover(L, gw, gh);
+    let { dw, dh } = cover(L, gw, gh);
+    // when jittering, enlarge just enough that a shift never shows an empty edge
+    const m = jit.a ? Math.max((dw + 2 * jit.a) / dw, (dh + 2 * jit.a) / dh) : 1;
+    const ex = (dw * m - dw) / 2, ey = (dh * m - dh) / 2;
     wctx.imageSmoothingEnabled = true;
     wctx.imageSmoothingQuality = 'high';
     const c = L.crop;
     wctx.drawImage(L.src, c.x * L.w, c.y * L.h, c.w * L.w, c.h * L.h,
-      ((gw - dw) / 2) * (1 + L.panX), ((gh - dh) / 2) * (1 + L.panY), dw, dh);
+      ((gw - dw) / 2) * (1 + L.panX) - ex + jit.jx, ((gh - dh) / 2) * (1 + L.panY) - ey + jit.jy, dw * m, dh * m);
   }
   return wctx.getImageData(0, 0, gw, gh).data;
 }
+
+// colour-mode inks as ImageData words (little-endian ABGR)
+const INKS = COLOR_PALETTE.map(([r, g, b]) => (0xff000000 | b << 16 | g << 8 | r) >>> 0);
 
 let imgData = null;
 function render() {
@@ -133,17 +154,28 @@ function render() {
     fitView();
   }
   const d = S.dither;
-  const tones = layers.map((L) => toTone(sample(L, gw, gh), L, L.invert));
-  let bits;
-  if (tones.length === 1) bits = dither(tones[0], gw, gh, d);
-  else if (S.blend.when === 'before') bits = dither(blendTones(tones[0], tones[1], S.blend.mode, S.blend.mix), gw, gh, d);
-  else bits = blendBits(dither(tones[0], gw, gh, d), dither(tones[1], gw, gh, d), gw, S.blend.mode, S.blend.mix);
+  const jit = jitter();
+  const pixels = layers.map((L) => sample(L, gw, gh, jit));
+  // black & white: one plane from luminance; colour: one plane each for R, G, B
+  const channels = d.color ? [0, 1, 2] : ['luma'];
+  const planes = channels.map((ch) => {
+    const tones = layers.map((L, i) => toTone(pixels[i], L, L.invert, ch));
+    if (tones.length === 1) return dither(tones[0], gw, gh, d);
+    if (S.blend.when === 'before') return dither(blendTones(tones[0], tones[1], S.blend.mode, S.blend.mix), gw, gh, d);
+    return blendBits(dither(tones[0], gw, gh, d), dither(tones[1], gw, gh, d), gw, S.blend.mode, S.blend.mix);
+  });
 
   if (!imgData) imgData = vctx.createImageData(gw, gh);
   const u32 = new Uint32Array(imgData.data.buffer);
-  const paper = S.tone.invert ? 0xff000000 : 0xffffffff;
-  const ink = S.tone.invert ? 0xffffffff : 0xff000000;
-  for (let i = 0; i < bits.length; i++) u32[i] = bits[i] ? paper : ink;
+  const flip = S.tone.invert ? 1 : 0;
+  if (planes.length === 1) {
+    const bits = planes[0];
+    for (let i = 0; i < bits.length; i++) u32[i] = bits[i] ^ flip ? 0xffffffff : 0xff000000;
+  } else {
+    const [r, g, b] = planes;
+    const f = flip * 7; // invert turns every channel bit over
+    for (let i = 0; i < r.length; i++) u32[i] = INKS[(r[i] << 2 | g[i] << 1 | b[i]) ^ f];
+  }
   vctx.putImageData(imgData, 0, 0);
 }
 
@@ -193,6 +225,7 @@ for (const el of $$('[data-k]')) {
   el.addEventListener(ev, () => {
     const p = el.dataset.k;
     let v = el.type === 'checkbox' ? el.checked
+      : 'bool' in el.dataset ? el.value === 'true'
       : el.type === 'range' || el.type === 'number' || 'num' in el.dataset ? parseFloat(el.value)
       : el.value;
     if (typeof v === 'number' && Number.isNaN(v)) return;
@@ -228,6 +261,7 @@ function syncUI() {
   const show = {
     video: vid, double: two, layer0: vid, layer1: two,
     diffusion: isDiffusion(S.dither.algo), screen: isScreen(S.dither.algo),
+    jitter: vid && S.dither.jitter,
     jpg: S.exp.format === 'jpg',
   };
   for (const el of $$('[data-show]')) el.hidden = !show[el.dataset.show];
@@ -282,8 +316,10 @@ function syncUI() {
     if (out) out.textContent = FMT[out.dataset.f]?.(v) ?? v;
   }
 
-  $('#btnClear').disabled = !has;
+  $('#btnClear').disabled = !has || S.busy;
   $('#btnExport').disabled = !has || S.busy;
+  for (const b of $$('#files button')) b.disabled = S.busy;
+  $('#btnSwap').disabled = S.busy;
 }
 
 // ── files ───────────────────────────────────────────────
@@ -310,6 +346,7 @@ async function handleFiles(list) {
       return true;
     }).slice(0, LIMITS.images - S.images.length);
     for (const f of ok) {
+      if (S.images.length >= LIMITS.images) break; // another drop may have filled the room while this one loaded
       try {
         const bmp = await createImageBitmap(f);
         S.images.push({ kind: 'image', name: f.name, size: f.size, src: bmp, w: bmp.width, h: bmp.height, crop: { x: 0, y: 0, w: 1, h: 1 }, ...LAYER_TONE, zoom: 1, panX: 0, panY: 0, invert: false, url: URL.createObjectURL(f) });
@@ -346,13 +383,13 @@ async function handleFiles(list) {
   showStage();
   syncUI();
   requestRender();
-  status(notes.length ? notes.join(' ') : `${S.layers.length === 2 ? 'Double exposure ready.' : 'Loaded.'}`, notes.length > 0);
+  status(notes.join(' '), notes.length > 0);
 }
 
 function loadVideo(f) {
   return new Promise((resolve, reject) => {
     const el = document.createElement('video');
-    el.muted = true; el.playsInline = true; el.preload = 'auto'; el.crossOrigin = 'anonymous';
+    el.muted = true; el.playsInline = true; el.preload = 'auto';
     const url = URL.createObjectURL(f);
     el.onloadeddata = () => {
       el.onloadeddata = el.onerror = null;
@@ -389,6 +426,7 @@ function clearAll() {
 }
 
 function removeLayer(i) {
+  if (S.busy) return;
   const arr = S.mode === 'image' ? S.images : S.videos;
   const L = arr[i];
   exitCrop(false);
@@ -397,17 +435,32 @@ function removeLayer(i) {
   URL.revokeObjectURL(L.url);
   if (L.kind === 'video') { L.src.removeAttribute('src'); L.src.load(); } else L.src.close?.();
   arr.splice(i, 1);
-  S.active = clamp(S.active, 0, S.images.length - 1);
+  if (S.mode === 'image') {
+    if (i < S.active) S.active--; // keep showing the same picture
+    S.active = clamp(S.active, 0, S.images.length - 1);
+  }
   S.sel = 0;
   if (S.mode === 'video') onChange('time.length');
   showStage(); syncUI(); requestRender();
 }
 
+// swap which video clip is layer A and which is layer B
+function swapAB() {
+  if (S.mode !== 'video' || S.videos.length !== 2 || S.busy) return;
+  exitCrop(true);
+  const wasPlaying = S.playing;
+  pause();
+  S.videos.reverse();
+  onChange('time.length');
+  showStage(); syncUI(); requestRender();
+  if (wasPlaying) play();
+}
+$('#btnSwap').onclick = swapAB;
+
 function showStage() {
   const has = S.layers.length > 0;
   $('#drop').hidden = has;
   $('#canvasWrap').hidden = !has;
-  $('#hint').hidden = !has;
   $('#transport').hidden = S.mode !== 'video';
   $('#tray').hidden = !(S.mode === 'image' && S.images.length > 1);
 
@@ -421,6 +474,8 @@ function showStage() {
     b.onclick = () => { exitCrop(true); S.active = i; showStage(); syncUI(); requestRender(); };
     $('#tray').append(b);
   });
+
+  $('#swapRow').hidden = !(S.mode === 'video' && S.videos.length === 2);
 
   // file list
   const list = $('#files');
@@ -614,14 +669,17 @@ function enterCrop() {
   r.w = Math.min(r.w, 1); r.h = Math.min(r.h, 1);
   r.x = clamp(r.x, 0, 1 - r.w); r.y = clamp(r.y, 0, 1 - r.h);
   L.zoom = 1; L.panX = 0; L.panY = 0;
-  S.crop = { L, saved, rn: null };
+  if (L.kind === 'video') saved.start = L.start;
+  S.crop = { L, saved, rn: null, len: S.time.length };
   L.crop = r;
   S.crop.rn = lockRatio(L);
   L.crop = fitRatio(r, S.crop.rn);
   $('#view').hidden = true;
   cropper.hidden = false;
   $('#cropBar').hidden = false;
-  $('#hint').hidden = true;
+  $('#transport').hidden = true;
+  $('#trim').hidden = L.kind !== 'video';
+  if (L.kind === 'video') L.src.currentTime = Math.min(L.start + S.time.playhead, L.dur - 0.001);
   fitView();
   drawCropper();
   status('Drag the handles to crop. Double-click or press Enter when done, Esc to cancel.');
@@ -636,13 +694,19 @@ function relockCrop() {
 
 function exitCrop(apply = true) {
   if (!S.crop) return;
-  const { L, saved } = S.crop;
-  if (!apply) Object.assign(L, saved);
+  const { L, saved, len } = S.crop;
+  if (!apply) { Object.assign(L, saved); S.time.length = len; }
   S.crop = null;
   cropper.hidden = true;
   $('#cropBar').hidden = true;
+  $('#trim').hidden = true;
+  $('#transport').hidden = S.mode !== 'video';
+  if (S.mode === 'video') {
+    S.time.playhead = clamp(S.time.playhead, 0, S.time.length);
+    seekAll(S.time.playhead);
+    updateTimecode();
+  }
   $('#view').hidden = false;
-  $('#hint').hidden = !S.layers.length;
   syncUI();
   fitView();
   requestRender();
@@ -679,7 +743,54 @@ function drawCropper() {
   const who = S.mode === 'video' && S.videos.length === 2 ? `layer ${'ab'[S.layers.indexOf(L)]} · ` : '';
   const lock = S.crop.rn ? 'ratio locked to the output' : 'hold shift to keep the ratio';
   $('#cropInfo').textContent = `${who}${pw} × ${ph}px · ${lock}`;
+  drawTrim();
 }
+
+// ── trim (crop mode, videos) ────────────────────────────
+// The bar spans the whole clip; the window between the notches is what's used.
+// Length is shared by both videos, so the out notch can't run past the other clip's end.
+const trimTrack = $('#trimTrack');
+const trimWin = $('.trim-win');
+const MIN_LEN = 0.1;
+
+function drawTrim() {
+  const L = S.crop?.L;
+  if (!L || L.kind !== 'video') return;
+  const len = S.time.length;
+  trimWin.style.left = `${(L.start / L.dur) * 100}%`;
+  trimWin.style.width = `${(len / L.dur) * 100}%`;
+  $('#trimInfo').textContent = `${L.start.toFixed(2)} – ${(L.start + len).toFixed(2)}s · ${len.toFixed(2)}s`;
+}
+
+let trimDrag = null;
+trimTrack.addEventListener('pointerdown', (e) => {
+  const t = e.target.closest('[data-t]');
+  if (!t || !S.crop) return;
+  e.preventDefault();
+  trimTrack.setPointerCapture(e.pointerId);
+  const L = S.crop.L;
+  const room = Math.min(Infinity, ...S.videos.filter((o) => o !== L).map((o) => o.dur - o.start));
+  trimDrag = { t: t.dataset.t, x: e.clientX, s0: L.start, e0: L.start + S.time.length, room };
+});
+trimTrack.addEventListener('pointermove', (e) => {
+  if (!trimDrag) return;
+  const L = S.crop.L;
+  const { t, s0, e0, room } = trimDrag;
+  const dt = ((e.clientX - trimDrag.x) / trimTrack.clientWidth) * L.dur;
+  let s = s0, en = e0, show;
+  if (t === 'in') { s = clamp(s0 + dt, Math.max(0, e0 - room), e0 - MIN_LEN); show = s; }
+  else if (t === 'out') { en = clamp(e0 + dt, s0 + MIN_LEN, Math.min(L.dur, s0 + room)); show = en; }
+  else { s = clamp(s0 + dt, 0, L.dur - (e0 - s0)); en = s + (e0 - s0); show = s; }
+  L.start = s;
+  S.time.length = en - s;
+  S.time.playhead = clamp(S.time.playhead, 0, S.time.length);
+  L.src.currentTime = Math.min(show, L.dur - 0.001); // preview the frame at the notch
+  drawTrim();
+  syncUI();
+});
+const endTrim = () => { trimDrag = null; };
+trimTrack.addEventListener('pointerup', endTrim);
+trimTrack.addEventListener('pointercancel', endTrim);
 
 function dragCrop(handle, start, dx, dy, rn) {
   if (handle === 'move') {
@@ -746,8 +857,8 @@ $('#btnCropClear').onclick = () => {
 
 // ── export ──────────────────────────────────────────────
 function baseName() {
-  const n = S.layers[0]?.name || 'derother';
-  return `${n.replace(/\.[^.]+$/, '')}_derother`;
+  const n = S.layers[0]?.name || 'fourbyfour';
+  return `${n.replace(/\.[^.]+$/, '')}_fourbyfour`;
 }
 
 function setBusy(on) {
@@ -759,6 +870,11 @@ function setBusy(on) {
   $('#btnClear').disabled = on;
   $('#btnPlay').disabled = on;
   $('#scrub').disabled = on;
+  // lock every setting while exporting (inert also blocks keyboard focus); only Cancel stays live
+  const sections = $$('#panel > section');
+  const exportSection = sections[sections.length - 1];
+  for (const s of sections.slice(1, -1)) s.inert = on;
+  for (const r of $$('.row', exportSection)) r.inert = on;
   syncUI();
 }
 
@@ -768,11 +884,11 @@ $('#btnExport').onclick = async () => {
   if (!S.layers.length || S.busy) return;
   exitCrop(true);
   const fmt = S.exp.format;
-  const { w, h } = exportSize();
+  const { w, h, cell } = exportSize();
   render();
   try {
     if (S.mode === 'image') {
-      await exportImage(view, { w, h, format: fmt, quality: S.exp.quality, name: baseName() });
+      await exportImage(view, { w, h, cell, format: fmt, quality: S.exp.quality, name: baseName() });
       status(`Saved ${w} × ${h} ${fmt.toUpperCase()}.`);
       return;
     }
@@ -784,17 +900,17 @@ $('#btnExport').onclick = async () => {
     const started = performance.now();
     status(`Rendering ${frames} frames…`);
     const ok = await exportVideo(view, {
-      w, h, format: fmt, fps, frames, name: baseName(),
+      w, h, cell, format: fmt, fps, frames, name: baseName(), color: S.dither.color,
       renderFrame: async (i) => {
         const t = i / fps;
         await Promise.all(S.videos.map((L) => seek(L.src, Math.min(L.start + t, L.dur - 0.001))));
+        S.time.playhead = t; // before render(), so jitter uses this frame's number
         render();
-        S.time.playhead = t;
         updateTimecode();
       },
-      onProgress: (p) => {
+      onProgress: (p, note = '') => {
         $('#progress div').style.width = `${(p * 100).toFixed(1)}%`;
-        status(`Rendering… ${Math.round(p * 100)}%`);
+        status(`${note}Rendering… ${Math.round(p * 100)}%`);
       },
       isCancelled: () => S.cancel,
     });
@@ -835,7 +951,8 @@ window.addEventListener('drop', (e) => {
 });
 
 window.addEventListener('keydown', (e) => {
-  if (S.crop && e.key === 'Enter') { e.preventDefault(); return exitCrop(true); }
+  // Enter on a focused button (cancel, reset…) should press that button, not apply the crop
+  if (S.crop && e.key === 'Enter' && document.activeElement?.tagName !== 'BUTTON') { e.preventDefault(); return exitCrop(true); }
   if (S.crop && e.key === 'Escape') { e.preventDefault(); return exitCrop(false); }
   if (e.code !== 'Space' || S.mode !== 'video') return;
   if (/INPUT|SELECT|TEXTAREA|BUTTON/.test(document.activeElement?.tagName)) return;

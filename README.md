@@ -1,6 +1,6 @@
-# derother
+# four by four
 
-A one-bit (black & white) dithering press for images and video, in the browser.
+A one-bit dithering press for images and video, in the browser: black & white, or colour (one bit per RGB channel, eight muted inks).
 
 ```
 npm install
