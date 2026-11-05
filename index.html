@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>derother</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <header class="top">
+    <h1>derother</h1>
+    <nav>
+      <button id="btnAdd" class="link">Add file</button>
+      <button id="btnClear" class="link" disabled>Clear</button>
+    </nav>
+  </header>
+
+  <main>
+    <section class="stage" id="stage">
+      <div class="drop" id="drop">
+        <div class="drop-inner">
+          <p class="big">Drop an image, or up to two videos.</p>
+          <p class="small">Images: JPG, PNG, WebP, GIF, up to 25&nbsp;MB each.<br />Videos: MP4, MOV, WebM, up to 500&nbsp;MB each. Two videos become a double exposure.</p>
+          <p><button class="btn" id="btnChoose">Choose files</button></p>
+        </div>
+      </div>
+      <div class="crop-bar" id="cropBar" hidden>
+        <span id="cropInfo"></span>
+        <button class="link" id="cropReset">reset</button>
+        <button class="link" id="cropCancel">cancel</button>
+        <button class="btn" id="cropDone">done</button>
+      </div>
+      <div class="canvas-wrap" id="canvasWrap" hidden>
+        <canvas id="view"></canvas>
+        <div class="cropper" id="cropper" hidden>
+          <canvas id="cropSrc"></canvas>
+          <div class="crop-box" id="cropBox" data-h="move">
+            <i class="g g1"></i><i class="g g2"></i><i class="g g3"></i><i class="g g4"></i>
+            <b data-h="nw"></b><b data-h="n"></b><b data-h="ne"></b><b data-h="e"></b>
+            <b data-h="se"></b><b data-h="s"></b><b data-h="sw"></b><b data-h="w"></b>
+          </div>
+        </div>
+      </div>
+      <div class="transport" id="transport" hidden>
+        <button class="link" id="btnPlay">Play</button>
+        <input type="range" id="scrub" min="0" max="1" step="0.001" value="0" />
+        <span class="mono" id="timecode">0.00 / 0.00</span>
+      </div>
+      <div class="tray" id="tray" hidden></div>
+      <p class="hint" id="hint" hidden><i>Drag to reposition · scroll to zoom · double-click to crop</i></p>
+    </section>
+
+    <aside class="panel" id="panel" aria-disabled="true">
+      <section>
+        <h2>Source</h2>
+        <ol class="files" id="files"><li class="muted"><i>Nothing loaded.</i></li></ol>
+      </section>
+
+      <section>
+        <h2>Frame</h2>
+        <label class="row"><span>Aspect</span>
+          <select data-k="frame.aspect">
+            <option value="source">Source</option>
+            <option value="1:1">1 : 1</option>
+            <option value="4:5">4 : 5</option>
+            <option value="3:4">3 : 4</option>
+            <option value="2:3">2 : 3</option>
+            <option value="16:9">16 : 9</option>
+            <option value="9:16">9 : 16</option>
+            <option value="custom">Custom</option>
+          </select>
+        </label>
+        <label class="row"><span>Width</span><input type="number" data-k="frame.w" min="16" max="4096" step="1" /><em>px</em></label>
+        <label class="row"><span>Height</span><input type="number" data-k="frame.h" min="16" max="4096" step="1" /><em>px</em></label>
+        <div class="layer-pick" id="layerPick" hidden>
+          <span>Adjust</span>
+          <button class="chip" data-layer="0">A</button>
+          <button class="chip" data-layer="1">B</button>
+        </div>
+        <label class="row"><span>Zoom</span><input type="range" data-k="layer.zoom" min="1" max="4" step="0.01" /><output data-f="x"></output></label>
+        <label class="row"><span>Pan x</span><input type="range" data-k="layer.panX" min="-1" max="1" step="0.001" /><output data-f="pct"></output></label>
+        <label class="row"><span>Pan y</span><input type="range" data-k="layer.panY" min="-1" max="1" step="0.001" /><output data-f="pct"></output></label>
+        <label class="row check"><span>Invert layer</span><input type="checkbox" data-k="layer.invert" /></label>
+        <p class="actions">
+          <button class="link" id="btnCrop">Crop…</button>
+          <button class="link" id="btnCropClear">Reset crop</button>
+        </p>
+      </section>
+
+      <section data-show="video">
+        <h2>Time</h2>
+        <label class="row"><span>Length</span><input type="range" data-k="time.length" min="0.1" max="10" step="0.01" /><output data-f="s"></output></label>
+        <label class="row" data-show="layer0"><span>Start A</span><input type="range" data-k="layers.0.start" min="0" max="1" step="0.01" /><output data-f="s"></output></label>
+        <label class="row" data-show="layer1"><span>Start B</span><input type="range" data-k="layers.1.start" min="0" max="1" step="0.01" /><output data-f="s"></output></label>
+        <label class="row"><span>Frame rate</span>
+          <select data-k="time.fps" data-num>
+            <option value="8">8</option><option value="12">12</option><option value="15">15</option>
+            <option value="24">24</option><option value="25">25</option><option value="30">30</option>
+          </select><em>fps</em>
+        </label>
+        <p class="note" id="timeNote"></p>
+      </section>
+
+      <section>
+        <h2>Dither</h2>
+        <label class="row"><span>Method</span><select data-k="dither.algo" id="algo"></select></label>
+        <label class="row"><span>Pixel size</span><input type="range" data-k="dither.pixel" min="1" max="16" step="1" /><output data-f="px"></output></label>
+        <label class="row"><span>Threshold</span><input type="range" data-k="dither.threshold" min="0" max="1" step="0.005" /><output data-f="pct"></output></label>
+        <label class="row" data-show="diffusion"><span>Diffusion</span><input type="range" data-k="dither.strength" min="0" max="1.5" step="0.01" /><output data-f="pct"></output></label>
+        <label class="row check" data-show="diffusion"><span>Serpentine</span><input type="checkbox" data-k="dither.serpentine" /></label>
+        <label class="row" data-show="screen"><span>Cell</span><input type="range" data-k="dither.cell" min="2" max="32" step="0.5" /><output data-f="px"></output></label>
+        <label class="row" data-show="screen"><span>Angle</span><input type="range" data-k="dither.angle" min="0" max="180" step="1" /><output data-f="deg"></output></label>
+      </section>
+
+      <section>
+        <h2>Tone</h2>
+        <div class="layer-pick" hidden>
+          <span>Adjust</span>
+          <button class="chip" data-layer="0">A</button>
+          <button class="chip" data-layer="1">B</button>
+        </div>
+        <label class="row"><span>Brightness</span><input type="range" data-k="layer.brightness" min="-0.5" max="0.5" step="0.005" /><output data-f="signed"></output></label>
+        <label class="row"><span>Contrast</span><input type="range" data-k="layer.contrast" min="-0.9" max="0.9" step="0.005" /><output data-f="signed"></output></label>
+        <label class="row"><span>Gamma</span><input type="range" data-k="layer.gamma" min="0.2" max="3" step="0.01" /><output data-f="n2"></output></label>
+        <label class="row check"><span>Invert all</span><input type="checkbox" data-k="tone.invert" /></label>
+      </section>
+
+      <section data-show="double">
+        <h2>Exposure</h2>
+        <label class="row"><span>Combine</span>
+          <select data-k="blend.when">
+            <option value="before">Tones, then dither</option>
+            <option value="after">Dither, then bits</option>
+          </select>
+        </label>
+        <label class="row"><span>Mode</span>
+          <select data-k="blend.mode">
+            <option value="screen">Screen</option>
+            <option value="multiply">Multiply</option>
+            <option value="difference">Difference</option>
+            <option value="lighten">Lighten</option>
+            <option value="darken">Darken</option>
+            <option value="average">Average</option>
+          </select>
+        </label>
+        <label class="row"><span>Mix of B</span><input type="range" data-k="blend.mix" min="0" max="1" step="0.01" /><output data-f="pct"></output></label>
+      </section>
+
+      <section>
+        <h2>Export</h2>
+        <label class="row"><span>Format</span><select data-k="exp.format" id="fmt"></select></label>
+        <label class="row"><span>Scale</span>
+          <select data-k="exp.scale" data-num>
+            <option value="0.5">½ ×</option><option value="1">1 ×</option><option value="2">2 ×</option><option value="4">4 ×</option>
+          </select>
+        </label>
+        <label class="row" data-show="jpg"><span>Quality</span><input type="range" data-k="exp.quality" min="0.5" max="1" step="0.01" /><output data-f="pct"></output></label>
+        <p class="note" id="outSize"></p>
+        <p class="actions">
+          <button class="btn" id="btnExport">Export</button>
+          <button class="link" id="btnCancel" hidden>Cancel</button>
+        </p>
+        <div class="progress" id="progress" hidden><div></div></div>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="status"><span id="status"><i>Ready.</i></span></footer>
+
+  <input type="file" id="file" multiple accept="image/*,video/*,.mov,.mp4,.webm,.m4v" hidden />
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
